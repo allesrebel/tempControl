@@ -63,7 +63,7 @@ int main(void) {
 	start_ADC();
 
 	//	Initial Conditions Heat Off
-	P1DIR &= ~BIT6;
+	P1DIR |= BIT6;
 	P1OUT &= ~BIT6;	//Turn off Heater
 
 	while (1) {
