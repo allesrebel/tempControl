@@ -35,9 +35,8 @@ void uartSendStr(char*);
  * UART Variables
  */
 char test[30];
-#define bufferSize 20
+#define bufferSize 5
 char buffer[bufferSize];	//Buffer for holding commands
-int bufferIndex = 0;		//Current Index of Buffer
 
 #define UP 1
 #define DOWN 0
@@ -45,8 +44,9 @@ int bufferIndex = 0;		//Current Index of Buffer
 //	Temperature Range Desired (in C)
 int turnOff = 620;	//	79C = 1.553V or 482 with ADC10 3.3Vref
 int turnOn = 530;	//	71C = 1.665V or 516 with ADC10 3.3Vref
-int trend = UP;
+int trend = DOWN;
 int secondsLast = 0;
+int offTime = 120;
 
 /*
  * main.c
@@ -62,9 +62,9 @@ int main(void) {
 
 	start_ADC();
 
-	//	Initial Conditions
-	P1DIR |= BIT6;
-	P1OUT |= BIT6;	//Turn on Heater
+	//	Initial Conditions Heat Off
+	P1DIR &= ~BIT6;
+	P1OUT &= ~BIT6;	//Turn off Heater
 
 	while (1) {
 		if(!(ADC10CTL1 & ADC10BUSY)){
@@ -94,7 +94,7 @@ int main(void) {
 				}
 			}
 			else if(trend == DOWN){
-				if(deltaSeconds > 120){
+				if(deltaSeconds > offTime){
 					P1OUT |= BIT6;	// Turn On the Heater
 					trend = UP;
 					secondsLast = seconds;
@@ -137,8 +137,9 @@ void uartSetup() {
 #pragma vector=USCIAB0RX_VECTOR
 __interrupt void UARTRx_ISR(void) {
 	//process current char
-	buffer[bufferIndex] = UCA0RXBUF;	//this should clear the flag
-	bufferIndex++;
+	sprintf(test,"Settings Changed Off Time: %d\n", (int)UCA0RXBUF - '0');
+	offTime = ((int)UCA0RXBUF - '0') * 60;
+	uartSendStr(test);
 }
 
 //ADC10 interrupt Service Routine
