@@ -1,5 +1,6 @@
 #include <msp430.h> 
 #include <stdio.h>
+#include "mydriverlib.h"
 
 /*
  * Port Definitions
@@ -17,17 +18,6 @@
 #define clkDiv9600	1666
 #define uartModCtrl	UCA0MCTL
 #define uartTxBuf	UCA0TXBUF
-
-//	ADC Port Definitions
-#define	adcCtrl0	ADC10CTL0
-#define	adcCtrl1	ADC10CTL1
-#define	adcCh		INCH_0
-#define adcChEn		BIT0
-//Add additional Ports and channels as needed
-#define	adcAEReg	ADC10AE0
-#define	adcDTC0Reg	ADC10DTC0
-#define	adcDTC1Reg	ADC10DTC1
-#define	adcStrtAddr	ADC10SA
 
 /*
  * Functions
@@ -49,42 +39,14 @@ char test[30];
 char buffer[bufferSize];	//Buffer for holding commands
 int bufferIndex = 0;		//Current Index of Buffer
 
-/*
- * ADC Functions
- */
-void adcSetup();
-void adcStart();
+#define UP 1
+#define DOWN 0
 
-/*
- * Global Variables & functions
- */
-#define TOTALCHANNELS 32
-unsigned int chNumber = 0;
-void initCh();
-void nextCh();
-
-/*
- * Initial Channel
- */
-void initCh(){
-	P2DIR |= BIT0 + BIT1 + BIT2 + BIT3;	//Set P2 to output
-	P2OUT = chNumber;
-}
-
-/*
- * Next Select Source
- */
-void nextCh(){
-	chNumber++;
-	if(chNumber >= TOTALCHANNELS)
-		chNumber = 0;
-	P2OUT = chNumber;
-
-	if(P2OUT & BIT4)
-		P2OUT &= ~BIT5;
-	else
-		P2OUT |= BIT5;
-}
+//	Temperature Range Desired (in C)
+int turnOff = 620;	//	79C = 1.553V or 482 with ADC10 3.3Vref
+int turnOn = 530;	//	71C = 1.665V or 516 with ADC10 3.3Vref
+int trend = UP;
+int secondsLast = 0;
 
 /*
  * main.c
@@ -93,22 +55,55 @@ int main(void) {
 	WDTCTL = WDTPW | WDTHOLD;	// Stop watchdog timer
 
 	//set up phase!
-	setupClock();
-	adcSetup();
+	init_driverLib();
 	uartSetup();
 
 	_enable_interrupts();
 
-	adcStart();
+	start_ADC();
 
+	//	Initial Conditions
 	P1DIR |= BIT6;
+	P1OUT |= BIT6;	//Turn on Heater
 
 	while (1) {
-		if(!(P1OUT & BIT6)){
+		if(!(ADC10CTL1 & ADC10BUSY)){
 			// Send the Information to Computer
 			sprintf(test,"ADC Val: %d\n", ADC10MEM);
 			uartSendStr(test);
-			adcStart();				// Take the Sample
+
+			// Figure out how much time as passed
+			int seconds = millis()/1000;
+			int deltaSeconds = seconds - secondsLast;
+
+			//	Edge Case - millis had to reset due to overflow
+			if(deltaSeconds < 0)
+				secondsLast = seconds;	// reset seconds
+
+			/*
+			 * Timed Logic
+			 * On for 1 Min
+			 * Off for 2 Mins
+			 */
+			if(trend == UP){
+				//	Keep Heater On for a Minute
+				if(deltaSeconds > 60){
+					P1OUT &= ~BIT6;	// Turn Off the Heater
+					trend = DOWN;
+					secondsLast = seconds;
+				}
+			}
+			else if(trend == DOWN){
+				if(deltaSeconds > 120){
+					P1OUT |= BIT6;	// Turn On the Heater
+					trend = UP;
+					secondsLast = seconds;
+				}
+			}
+			else
+				P1OUT &= ~BIT6;		// Should never get here
+
+			start_ADC();				// Take the Sample
 		}
 	}
 }
@@ -125,17 +120,6 @@ void uartSend(char data) {
 	while (!(IFG2 & UCA0TXIFG))
 		; // Wait for TX buffer to be ready for new data
 	uartTxBuf = data;
-}
-
-void adcStart() {
-	P1OUT |= BIT6;			// Indiate when a Sample is taken
-	adcCtrl0 |= ENC + ADC10SC;	// Sampling and conversion start
-}
-
-void adcSetup() {
-	adcCtrl1 = CONSEQ_0 + adcCh;	// single channel. single conversion, A1
-	adcCtrl0 = ADC10SHT_2 + ADC10ON + ADC10IE;// ADC10ON, interrupt enable
-	adcAEReg |= adcChEn;	// Select the ports desired
 }
 
 void uartSetup() {
@@ -161,7 +145,6 @@ __interrupt void UARTRx_ISR(void) {
 #pragma vector=ADC10_VECTOR
 __interrupt void ADC10_ISR(void) {
 	ADC10CTL0 &= ~ADC10IFG;  // clear interrupt flag
-	P1OUT &= ~BIT6;	// Indicate Completion of a Sample
 }
 
 void setupClock() {

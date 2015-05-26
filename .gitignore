@@ -8,3 +8,4 @@ msp432p401r.cmd
 targetConfigs/*
 .launches/*
 .gitattributes
+/Debug/
